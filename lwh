@@ -1,0 +1,136 @@
+import tkinter as tk
+from tkinter import messagebox
+from ortools.constraint_solver import routing_enums_pb2
+from ortools.constraint_solver import pywrapcp
+import numpy as np
+import matplotlib.pyplot as plt
+
+class VRPApp:
+    def __init__(self, root):
+        # 初始化應用程式
+        self.root = root
+        self.root.title("物流配送路徑最佳化")
+
+        self.locations = []  # 存儲座標點的列表
+
+        # 界面標籤和輸入框
+        self.instructions_label = tk.Label(root, text="輸入座標 (格式: x,y):")
+        self.instructions_label.pack()
+
+        self.entry_frame = tk.Frame(root)
+        self.entry_frame.pack()
+
+        self.coord_entry = tk.Entry(self.entry_frame)  # 座標輸入框
+        self.coord_entry.pack(side=tk.LEFT)
+
+        # 添加座標的按鈕
+        self.add_button = tk.Button(self.entry_frame, text="添加", command=self.add_location)
+        self.add_button.pack(side=tk.LEFT)
+
+        # 計算最佳路徑的按鈕
+        self.calculate_button = tk.Button(root, text="計算最佳路徑", command=self.calculate_vrp)
+        self.calculate_button.pack()
+
+        # 顯示輸出結果的文本框
+        self.output_text = tk.Text(root, height=10, width=50)
+        self.output_text.pack()
+
+    def add_location(self):
+        # 添加座標點到列表中
+        coord = self.coord_entry.get().strip()
+        try:
+            x, y = map(int, coord.split(','))  # 分割輸入的座標並轉換為整數
+            self.locations.append([x, y])  # 添加座標到列表
+            self.coord_entry.delete(0, tk.END)  # 清空輸入框
+            self.update_output()  # 更新顯示的座標列表
+        except ValueError:
+            messagebox.showerror("輸入錯誤", "請輸入有效的座標 (格式: x,y)")
+
+    def update_output(self):
+        # 更新文本框顯示的已添加座標
+        self.output_text.delete(1.0, tk.END)
+        self.output_text.insert(tk.END, "已添加座標:\n")
+        for i, loc in enumerate(self.locations):
+            self.output_text.insert(tk.END, f"點 {i}: ({loc[0]}, {loc[1]})\n")
+
+    def calculate_vrp(self):
+        # 計算最佳路徑
+        if len(self.locations) < 2:
+            messagebox.showerror("錯誤", "請至少添加兩個座標")
+            return
+
+        def create_data_model():
+            # 創建數據模型
+            data = {}
+            # 計算距離矩陣
+            data['distance_matrix'] = np.linalg.norm(np.array(self.locations)[:, np.newaxis] - np.array(self.locations), axis=2).astype(int)
+            data['num_vehicles'] = 1  # 設定車輛數量
+            data['depot'] = 0  # 設定起點
+            return data
+
+        def print_solution(manager, routing, solution):
+            # 打印解決方案
+            route = []
+            index = routing.Start(0)
+            while not routing.IsEnd(index):
+                route.append(manager.IndexToNode(index))
+                index = solution.Value(routing.NextVar(index))
+            route.append(manager.IndexToNode(index))
+            return route
+
+        # 創建數據模型
+        data = create_data_model()
+        manager = pywrapcp.RoutingIndexManager(len(data['distance_matrix']), data['num_vehicles'], data['depot'])
+        routing = pywrapcp.RoutingModel(manager)
+
+        # 創建距離回調函數
+        def distance_callback(from_index, to_index):
+            from_node = manager.IndexToNode(from_index)
+            to_node = manager.IndexToNode(to_index)
+            return data['distance_matrix'][from_node][to_node]
+
+        transit_callback_index = routing.RegisterTransitCallback(distance_callback)
+        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+
+        # 設置搜索參數
+        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+        search_parameters.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+
+        # 求解問題
+        solution = routing.SolveWithParameters(search_parameters)
+
+        if solution:
+            route = print_solution(manager, routing, solution)
+            self.display_route(route)
+            self.plot_route(route)
+        else:
+            messagebox.showerror("錯誤", "未找到解決方案")
+
+    def display_route(self, route):
+        # 顯示最佳路徑
+        self.output_text.insert(tk.END, "\n最佳路徑:\n")
+        for node in route:
+            self.output_text.insert(tk.END, f"{node} -> ")
+        self.output_text.insert(tk.END, f"{route[0]}\n")
+
+    def plot_route(self, route):
+        # 繪製最佳路徑
+        locations = np.array(self.locations)
+        plt.figure(figsize=(8, 6))
+        plt.scatter(locations[:, 0], locations[:, 1], c='red', marker='o')
+        for i in range(len(route) - 1):
+            plt.plot([locations[route[i], 0], locations[route[i + 1], 0]],
+                     [locations[route[i], 1], locations[route[i + 1], 1]], 'b-')
+        plt.plot([locations[route[-1], 0], locations[route[0], 0]],
+                 [locations[route[-1], 1], locations[route[0], 1]], 'b-')
+        plt.xlabel('X Coordinate')
+        plt.ylabel('Y Coordinate')
+        plt.title('物流配送路徑最佳化')
+        plt.grid(True)
+        plt.show()
+
+if __name__ == "__main__":
+    # 創建主窗口並運行應用
+    root = tk.Tk()
+    app = VRPApp(root)
+    root.mainloop()
